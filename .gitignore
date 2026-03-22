@@ -30,5 +30,8 @@ data/processed/
 # Pytest
 .pytest_cache/
 
+# pyvis generated assets
+lib/
+
 # Environment
 .env
