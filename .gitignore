@@ -19,6 +19,7 @@ data/processed/
 
 # OS
 .DS_Store
+*.gdoc
 
 # Claude Code local settings
 .claude/settings.local.json
