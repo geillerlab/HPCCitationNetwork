@@ -1,11 +1,13 @@
 # HPCCitationNetwork
 
-Build, analyze, and explore citation networks around specialized scientific topics.
+Citation network analysis for a review on **hippocampal recurrent circuit computation** — what computation does intrinsic recurrence in the hippocampus perform?
 
 ## Features (planned)
-- Collect papers and citations via OpenAlex API
+- Import seed papers from curated review document via DOI → OpenAlex
 - Build directed citation networks with snowball sampling
-- Analyze network structure: centrality, communities, co-citation, temporal evolution
+- Unsupervised community detection to test theoretical category structure
+- Gap detection: find influential papers missing from the review
+- Theory/model filtering via LLM-based abstract classification
 - Interactive visualization of citation landscapes
 
 ## Setup

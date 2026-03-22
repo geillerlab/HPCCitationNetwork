@@ -1,9 +1,15 @@
 # HPCCitationNetwork
 
 ## Project Overview
-Citation network analysis tool for a specialized scientific topic (TBD).
+Citation network analysis for a review paper on **hippocampal recurrent circuit computation**.
+The review (with Jon Rueckemann) asks: what computation does intrinsic recurrence in HPC perform?
+Theories: point attractors, continuous attractors, sequences, SR, BTSP, bespoke circuits.
+
 Collects papers via OpenAlex API, builds directed citation graphs, and analyzes
 network structure (communities, centrality, co-citation, temporal evolution).
+**Key goals**: (1) find missing papers, (2) test whether citation communities match review categories.
+
+Google Doc seed source: "HPC Recurrent Circuit" (ID: 1QlF34RElUYZ8C6aEjisSuwyysOhPy6M6naVMcEduIiA)
 
 ## Tech Stack
 - Python 3.12, managed with `uv`
