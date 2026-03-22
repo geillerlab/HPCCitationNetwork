@@ -70,7 +70,7 @@ stats = graph_summary(G)
 st.sidebar.header("Controls")
 
 # Top N
-top_n = st.sidebar.slider("Top N papers (by in-degree)", 50, 500, 200, step=50)
+top_n = st.sidebar.slider("Top N papers (by in-degree)", 50, 1000, 200, step=50)
 
 # Get top N nodes
 top_nodes = sorted(in_deg, key=in_deg.get, reverse=True)[:top_n]
