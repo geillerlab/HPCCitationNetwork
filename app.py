@@ -29,9 +29,9 @@ st.title("HPC Recurrent Circuit — Citation Network Explorer")
 
 
 # ---------------------------------------------------------------------------
-# Data loading (cached)
+# Data loading (cached with TTL so metadata updates are picked up)
 # ---------------------------------------------------------------------------
-@st.cache_resource
+@st.cache_resource(ttl=300)
 def load_graph():
     db = CitationDB()
     G = build_citation_graph(db)
@@ -126,6 +126,21 @@ selected_categories = st.sidebar.multiselect(
 
 # Search
 search_query = st.sidebar.text_input("Search (author or title)")
+
+# Timeline bin size
+st.sidebar.header("Timeline")
+bin_years = st.sidebar.select_slider(
+    "Year bin size",
+    options=[1, 2, 5, 10],
+    value=1,
+    help="Group papers into bins of N years",
+)
+
+# Cache management
+if st.sidebar.button("🔄 Clear cache & reload"):
+    st.cache_resource.clear()
+    st.cache_data.clear()
+    st.rerun()
 
 # ---------------------------------------------------------------------------
 # Filter nodes
@@ -356,13 +371,15 @@ if not confusion.empty:
 # ---------------------------------------------------------------------------
 # Timeline: papers by year, stacked by community or category
 # ---------------------------------------------------------------------------
-def build_timeline(nodes, node_to_comm, G, group_by="community"):
+def build_timeline(nodes, node_to_comm, G, group_by="community", bin_size=1):
     rows = []
     for n in nodes:
         data = G.nodes[n]
         year = data.get("publication_year")
         if year is None:
             continue
+        if bin_size > 1:
+            year = (year // bin_size) * bin_size
         if group_by == "community":
             group = f"C{node_to_comm.get(n, -1)}"
         else:
@@ -375,19 +392,43 @@ def build_timeline(nodes, node_to_comm, G, group_by="community"):
 
 
 timeline_group = "community" if color_by == "Detected community" else "category"
-timeline_df = build_timeline(filtered_nodes, node_to_comm, G, group_by=timeline_group)
+timeline_df = build_timeline(
+    filtered_nodes, node_to_comm, G,
+    group_by=timeline_group, bin_size=bin_years,
+)
 
 if not timeline_df.empty:
     fig_timeline = px.bar(
         timeline_df, x="year", y="count", color="group",
         labels={"year": "Publication Year", "count": "Papers", "group": ""},
-        height=350,
+        height=400,
     )
     fig_timeline.update_layout(
         margin=dict(l=0, r=0, t=30, b=0),
         barmode="stack",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
+
+    # Overlay community trend lines
+    if timeline_group == "community":
+        groups = sorted(timeline_df["group"].unique())
+        for grp in groups:
+            grp_df = timeline_df[timeline_df["group"] == grp].sort_values("year")
+            if len(grp_df) < 2:
+                continue
+            # Get the community index for color lookup
+            comm_idx = int(grp.replace("C", "")) if grp.startswith("C") else -1
+            color = comm_colors.get(comm_idx, "#888888")
+            fig_timeline.add_trace(go.Scatter(
+                x=grp_df["year"],
+                y=grp_df["count"],
+                mode="lines",
+                name=grp,
+                line=dict(color=color, width=2),
+                showlegend=False,
+                hoverinfo="skip",
+                opacity=0.7,
+            ))
 
 # ---------------------------------------------------------------------------
 # Top papers table
@@ -417,12 +458,14 @@ table_df = build_top_table(filtered_nodes, node_to_comm, G, pr, in_deg)
 # Layout
 # ---------------------------------------------------------------------------
 # Stats bar
-c1, c2, c3, c4, c5 = st.columns(5)
+c1, c2, c3, c4, c5, c6 = st.columns(6)
 c1.metric("Papers shown", len(filtered_nodes))
 c2.metric("Edges", filtered_G.number_of_edges())
 c3.metric("Seeds", sum(1 for n in filtered_nodes if G.nodes[n].get("is_seed")))
 c4.metric("Communities", n_communities)
-c5.metric("Total in DB", stats["nodes"])
+c5.metric("With metadata",
+          sum(1 for n in filtered_nodes if G.nodes[n].get("title")))
+c6.metric("Total in DB", stats["nodes"])
 
 # Main panels
 col_left, col_right = st.columns([3, 2])
