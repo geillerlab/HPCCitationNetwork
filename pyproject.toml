@@ -1,0 +1,25 @@
+[project]
+name = "hpc-citation-network"
+version = "0.1.0"
+description = "Build, analyze, and explore citation networks around specialized scientific topics"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.31",
+    "pandas>=2.2",
+    "networkx>=3.2",
+    "matplotlib>=3.8",
+    "pyvis>=0.3",
+    "cdlib>=0.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "responses>=0.25",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
