@@ -155,12 +155,13 @@ filtered_G = sub_G.subgraph(filtered_nodes).copy()
 # Compute layout (cached per subgraph size)
 # ---------------------------------------------------------------------------
 @st.cache_data
-def compute_layout(_nodes, _edges, seed):
+def compute_layout(nodes, edges, seed):
     """Compute spring layout for the filtered graph."""
     tmp_G = nx.DiGraph()
-    tmp_G.add_nodes_from(_nodes)
-    tmp_G.add_edges_from(_edges)
-    return nx.spring_layout(tmp_G, k=2.0 / (len(_nodes) ** 0.3), iterations=80, seed=seed)
+    tmp_G.add_nodes_from(nodes)
+    tmp_G.add_edges_from(edges)
+    k = 2.0 / (len(nodes) ** 0.3) if nodes else 1.0
+    return nx.spring_layout(tmp_G, k=k, iterations=80, seed=seed)
 
 
 pos = compute_layout(
