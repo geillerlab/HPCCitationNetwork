@@ -250,7 +250,8 @@ edge_trace = go.Scatter(
     mode="lines",
 )
 
-# Node positions
+# Node positions — only include nodes that have a layout position
+filtered_nodes = [n for n in filtered_nodes if n in pos]
 node_x = [pos[n][0] for n in filtered_nodes]
 node_y = [pos[n][1] for n in filtered_nodes]
 
@@ -315,7 +316,28 @@ def build_confusion_matrix(nodes, node_to_comm, G):
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
-    return pd.crosstab(df["category"], df["community"])
+    ct = pd.crosstab(df["category"], df["community"])
+
+    # Sort so the largest values fall along the diagonal:
+    # For each community (column), find the category with the max count,
+    # then order columns by that category's row order.
+    # First, assign each column to its dominant category
+    col_to_cat = {col: ct[col].idxmax() for col in ct.columns}
+    # Order categories by their first dominant community appearance
+    seen_cats = []
+    ordered_cols = []
+    for col in sorted(ct.columns, key=lambda c: ct[c].max(), reverse=True):
+        cat = col_to_cat[col]
+        if cat not in seen_cats:
+            seen_cats.append(cat)
+        ordered_cols.append(col)
+    # Remaining categories not dominant in any community
+    for cat in ct.index:
+        if cat not in seen_cats:
+            seen_cats.append(cat)
+    # Reorder
+    ct = ct.reindex(index=seen_cats, columns=ordered_cols, fill_value=0)
+    return ct
 
 
 confusion = build_confusion_matrix(filtered_nodes, node_to_comm, G)
