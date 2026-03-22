@@ -106,7 +106,7 @@ def interactive_seed_graph(
         cat = data.get("seed_category", "")
         color = get_node_color(data)
 
-        # Size by in-degree (log scale, min 10, max 50)
+        # Size by in-degree (linear scale, min 10, max 50)
         deg = in_degrees.get(node, 0)
         size = min(50, max(10, 5 + deg * 0.2))
 

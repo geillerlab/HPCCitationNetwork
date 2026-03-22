@@ -1,7 +1,6 @@
 """Snowball sampling collector for building citation networks."""
 
 import logging
-import time
 from typing import Any
 
 from src.data.openalex_client import OpenAlexClient

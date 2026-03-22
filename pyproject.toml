@@ -13,6 +13,7 @@ dependencies = [
     "cdlib>=0.4",
     "streamlit>=1.55.0",
     "plotly>=6.6.0",
+    "fa2>=1.1",
 ]
 
 [project.optional-dependencies]

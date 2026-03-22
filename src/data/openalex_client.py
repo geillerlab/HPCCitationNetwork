@@ -7,9 +7,6 @@ import requests
 
 BASE_URL = "https://api.openalex.org"
 
-# OpenAlex asks for a polite pool email for higher rate limits
-DEFAULT_EMAIL = None  # Set via OpenAlexClient(email=...)
-
 
 class OpenAlexClient:
     """Client for the OpenAlex API.
