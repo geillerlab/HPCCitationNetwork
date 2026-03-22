@@ -114,10 +114,14 @@ class CitationDB:
     def add_citation(self, citing_id: str, cited_id: str) -> None:
         """Add a citation edge (citing_id cites cited_id).
 
+        Self-citations are silently ignored.
+
         Args:
             citing_id: OpenAlex ID of the citing paper.
             cited_id: OpenAlex ID of the cited paper.
         """
+        if citing_id == cited_id:
+            return
         self.conn.execute(
             "INSERT OR IGNORE INTO citations (citing_id, cited_id) VALUES (?, ?)",
             (citing_id, cited_id),
@@ -127,14 +131,18 @@ class CitationDB:
     def add_citations_bulk(self, edges: list[tuple[str, str]]) -> None:
         """Add multiple citation edges at once.
 
+        Self-citations are silently filtered out.
+
         Args:
             edges: List of (citing_id, cited_id) tuples.
         """
-        self.conn.executemany(
-            "INSERT OR IGNORE INTO citations (citing_id, cited_id) VALUES (?, ?)",
-            edges,
-        )
-        self.conn.commit()
+        filtered = [(a, b) for a, b in edges if a != b]
+        if filtered:
+            self.conn.executemany(
+                "INSERT OR IGNORE INTO citations (citing_id, cited_id) VALUES (?, ?)",
+                filtered,
+            )
+            self.conn.commit()
 
     def get_paper(self, openalex_id: str) -> dict[str, Any] | None:
         """Get a paper by OpenAlex ID.

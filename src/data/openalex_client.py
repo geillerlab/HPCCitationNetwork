@@ -7,9 +7,6 @@ import requests
 
 BASE_URL = "https://api.openalex.org"
 
-# OpenAlex asks for a polite pool email for higher rate limits
-DEFAULT_EMAIL = None  # Set via OpenAlexClient(email=...)
-
 
 class OpenAlexClient:
     """Client for the OpenAlex API.
@@ -139,6 +136,37 @@ class OpenAlexClient:
                 break
 
         return cited_by_ids
+
+    def get_works_batch(self, openalex_ids: list[str], per_page: int = 50) -> list[dict[str, Any]]:
+        """Fetch multiple works in a single API call using pipe-separated IDs.
+
+        OpenAlex supports filtering by multiple IDs: filter=openalex:W1|W2|W3
+        This is much faster than individual get_work() calls.
+
+        Args:
+            openalex_ids: List of OpenAlex IDs (full URLs or short form).
+            per_page: Results per page (max 50 for filter queries).
+
+        Returns:
+            List of OpenAlex work dicts.
+        """
+        if not openalex_ids:
+            return []
+
+        results = []
+        # Process in chunks of 50 (OpenAlex limit for pipe-separated filters)
+        for i in range(0, len(openalex_ids), per_page):
+            chunk = openalex_ids[i:i + per_page]
+            # Build pipe-separated filter
+            id_filter = "|".join(chunk)
+            params: dict[str, Any] = {
+                "filter": f"openalex:{id_filter}",
+                "per-page": per_page,
+            }
+            resp = self._get(f"{BASE_URL}/works", params=params)
+            results.extend(resp.get("results", []))
+
+        return results
 
     def search_works(
         self,

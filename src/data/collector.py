@@ -1,7 +1,6 @@
 """Snowball sampling collector for building citation networks."""
 
 import logging
-import time
 from typing import Any
 
 from src.data.openalex_client import OpenAlexClient
@@ -126,20 +125,21 @@ class SnowballCollector:
                         if ref_edges:
                             self.db.add_citations_bulk(ref_edges)
 
-                # Store stub papers for all new IDs at this level
+                # Collect new neighbor IDs that aren't in the DB yet
                 all_neighbor_ids = set(cited_by_ids)
                 if refs:
                     all_neighbor_ids.update(r for r in refs if r)
 
+                new_ids = []
                 for neighbor_id in all_neighbor_ids:
                     existing = self.db.get_paper(neighbor_id)
                     if existing is None:
-                        # Store a stub — metadata will be fetched if needed
-                        self.db.upsert_paper({
-                            "openalex_id": neighbor_id,
-                            "snowball_level": level,
-                        })
-                        papers_added += 1
+                        new_ids.append(neighbor_id)
+
+                # Batch-fetch metadata for new papers
+                if new_ids:
+                    self._batch_store_papers(new_ids, level)
+                    papers_added += len(new_ids)
 
             except Exception as e:
                 logger.error("Error processing %s: %s", oa_id, e)
@@ -163,6 +163,40 @@ class SnowballCollector:
             "citations_added": citations_added,
             "errors": errors,
         }
+
+    def _batch_store_papers(self, openalex_ids: list[str], level: int) -> None:
+        """Fetch metadata for a batch of papers and store them.
+
+        Uses the batch API for efficiency. Falls back to stub records
+        for any papers that fail to fetch.
+
+        Args:
+            openalex_ids: List of OpenAlex IDs to fetch and store.
+            level: Snowball level to assign.
+        """
+        try:
+            works = self.client.get_works_batch(openalex_ids)
+            fetched_ids = set()
+            for work in works:
+                meta = OpenAlexClient.extract_paper_metadata(work)
+                meta["snowball_level"] = level
+                self.db.upsert_paper(meta)
+                fetched_ids.add(meta["openalex_id"])
+
+            # Store stubs for any IDs that weren't returned by the batch API
+            for oa_id in openalex_ids:
+                if oa_id not in fetched_ids:
+                    self.db.upsert_paper({
+                        "openalex_id": oa_id,
+                        "snowball_level": level,
+                    })
+        except Exception as e:
+            logger.warning("Batch fetch failed, storing stubs: %s", e)
+            for oa_id in openalex_ids:
+                self.db.upsert_paper({
+                    "openalex_id": oa_id,
+                    "snowball_level": level,
+                })
 
     def fetch_metadata_for_stubs(self, batch_size: int = 100) -> dict[str, int]:
         """Fetch full metadata for papers that only have stub records.
