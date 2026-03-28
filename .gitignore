@@ -22,7 +22,7 @@ data/processed/
 *.gdoc
 
 # Claude Code local settings
-.claude/settings.local.json
+.claude/
 
 # Jupyter
 .ipynb_checkpoints/

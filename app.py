@@ -4,7 +4,9 @@ Run with: uv run streamlit run app.py
 """
 
 import re
+import tempfile
 from collections import Counter, defaultdict
+from pathlib import Path
 
 import networkx as nx
 import numpy as np
@@ -15,9 +17,12 @@ import streamlit as st
 from cdlib import algorithms
 from fa2 import ForceAtlas2
 
-from src.data.storage import CitationDB
+from src.data.endnote_parser import parse_endnote_xml
+from src.data.openalex_client import OpenAlexClient
+from src.data.collector import SnowballCollector
+from src.data.storage import CitationDB, DEFAULT_DB_PATH
 from src.network.builder import build_citation_graph, graph_summary
-from src.viz.plots import CATEGORY_COLORS, get_node_color
+from src.viz.plots import CATEGORY_COLORS, ensure_category_colors, get_node_color
 
 # Common stopwords for title-based keyword extraction
 _STOPWORDS = frozenset({
@@ -37,21 +42,19 @@ _STOPWORDS = frozenset({
 # Page config
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="HPC Citation Network",
+    page_title="Citation Network Explorer",
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-st.title("HPC Recurrent Circuit — Citation Network Explorer")
 
 
 # ---------------------------------------------------------------------------
 # Data loading (cached with TTL so metadata updates are picked up)
 # ---------------------------------------------------------------------------
 @st.cache_resource(ttl=300)
-def load_graph() -> tuple[nx.DiGraph, nx.Graph]:
+def load_graph(db_path: str | Path = DEFAULT_DB_PATH) -> tuple[nx.DiGraph, nx.Graph]:
     """Load citation graph and its undirected version (cached)."""
-    db = CitationDB()
+    db = CitationDB(db_path)
     G = build_citation_graph(db)
     db.close()
     G_undirected = G.to_undirected()
@@ -116,7 +119,143 @@ def run_community_detection(
     return node_to_comm, n_communities
 
 
-G, G_undirected = load_graph()
+# ---------------------------------------------------------------------------
+# Upload flow — shown when no data is available yet
+# ---------------------------------------------------------------------------
+# Determine which DB to use
+if "db_path" not in st.session_state:
+    # Check if the default DB already has data
+    if DEFAULT_DB_PATH.exists():
+        _test_db = CitationDB(DEFAULT_DB_PATH)
+        _has_data = _test_db.get_paper_count() > 0
+        _test_db.close()
+        if _has_data:
+            st.session_state["db_path"] = str(DEFAULT_DB_PATH)
+            st.session_state["pipeline_complete"] = True
+
+
+def _show_upload_page() -> None:
+    """Render the upload page and run the pipeline on submit."""
+    st.title("📚 Citation Network Explorer")
+    st.markdown(
+        "Upload an **EndNote XML** export and this app will automatically "
+        "resolve your papers via [OpenAlex](https://openalex.org), run a "
+        "snowball citation collection, and build an interactive network."
+    )
+
+    uploaded = st.file_uploader(
+        "Upload an EndNote XML export (.xml)",
+        type=["xml"],
+        help="In EndNote: File → Export → select XML format.",
+    )
+
+    email = st.text_input(
+        "Email (optional — for faster OpenAlex rate limits)",
+        placeholder="you@university.edu",
+        help="OpenAlex gives higher rate limits to requests with a contact email.",
+    )
+
+    if uploaded is None:
+        st.info("Upload a file to get started.")
+        st.stop()
+
+    # Parse the XML
+    try:
+        records = parse_endnote_xml(uploaded.read())
+    except Exception as exc:
+        st.error(f"Failed to parse XML: {exc}")
+        st.stop()
+
+    if not records:
+        st.error("No records found in the XML file.")
+        st.stop()
+
+    # Show summary
+    n_with_doi = sum(1 for r in records if r.get("doi"))
+    categories = sorted(set(r["seed_category"] for r in records))
+    cat_counts = Counter(r["seed_category"] for r in records)
+
+    st.success(f"**{len(records)}** papers parsed ({n_with_doi} with DOIs)")
+
+    if len(categories) > 1 or (len(categories) == 1 and categories[0] != "uncategorized"):
+        st.markdown("**Groups found:**")
+        cat_df = pd.DataFrame(
+            [{"Group": c, "Papers": cat_counts[c]} for c in categories]
+        )
+        st.dataframe(cat_df, hide_index=True, use_container_width=False)
+
+    # Run pipeline
+    st.markdown("---")
+    st.subheader("Building citation network…")
+
+    # Create a session-specific DB in a temp directory
+    tmp_dir = tempfile.mkdtemp(prefix="citation_net_")
+    db_path = Path(tmp_dir) / "citations.db"
+    db = CitationDB(db_path)
+    client = OpenAlexClient(email=email or "citation-network-app@example.com")
+    collector = SnowballCollector(client, db)
+
+    # Phase 1: Resolve seeds
+    progress_bar = st.progress(0, text="Resolving papers via OpenAlex…")
+    status_area = st.empty()
+
+    def update_progress(current: int, total: int, msg: str) -> None:
+        progress_bar.progress(
+            current / max(total, 1),
+            text=f"Resolving papers ({current}/{total})",
+        )
+        status_area.caption(msg)
+
+    seed_stats = collector.import_seed_records(
+        records, progress_callback=update_progress,
+    )
+    progress_bar.progress(1.0, text="Seed resolution complete!")
+    status_area.caption(
+        f"Resolved {seed_stats['resolved']}/{seed_stats['total']} papers "
+        f"({seed_stats['failed']} failed)"
+    )
+
+    # Phase 2: Snowball (level 1)
+    if seed_stats["resolved"] > 0:
+        snow_bar = st.progress(0, text="Running snowball collection (level 1)…")
+        level_stats = collector.collect_level(level=1, max_cited_by=200)
+        snow_bar.progress(1.0, text="Snowball complete!")
+        st.caption(
+            f"Added {level_stats['papers_added']} papers, "
+            f"{level_stats['citations_added']} citation edges"
+        )
+
+    db.close()
+
+    # Register dynamic category colors
+    ensure_category_colors(categories)
+
+    # Store in session state
+    st.session_state["db_path"] = str(db_path)
+    st.session_state["pipeline_complete"] = True
+    st.rerun()
+
+
+# Gate: if no data yet, show upload page
+if not st.session_state.get("pipeline_complete"):
+    _show_upload_page()
+    st.stop()
+
+# Load graph from the session's DB
+_db_path = st.session_state.get("db_path", str(DEFAULT_DB_PATH))
+G, G_undirected = load_graph(_db_path)
+
+st.title("📚 Citation Network Explorer")
+
+if G.number_of_nodes() == 0:
+    st.warning("No papers in the database. Please upload an EndNote XML file.")
+    if st.button("↩ Upload new file"):
+        st.session_state.pop("db_path", None)
+        st.session_state.pop("pipeline_complete", None)
+        st.cache_resource.clear()
+        st.rerun()
+    st.stop()
+
 pr, in_deg, out_deg = compute_metrics(G)
 stats = graph_summary(G)  # cheap: just len() calls on cached graph
 
@@ -125,19 +264,49 @@ stats = graph_summary(G)  # cheap: just len() calls on cached graph
 # ---------------------------------------------------------------------------
 st.sidebar.header("Controls")
 
+# Upload new file button in sidebar
+if st.sidebar.button("📤 Upload new file"):
+    st.session_state.pop("db_path", None)
+    st.session_state.pop("pipeline_complete", None)
+    st.cache_resource.clear()
+    st.cache_data.clear()
+    st.rerun()
+
 # Top N
 top_n = st.sidebar.slider("Top N papers (by in-degree)", 50, 1000, 800, step=50)
 
-# Get top N nodes
-top_nodes = sorted(in_deg, key=in_deg.get, reverse=True)[:top_n]
+# Minimum year filter
+all_graph_years = sorted(set(
+    G.nodes[n].get("publication_year") or 0
+    for n in G.nodes
+))
+valid_years = [y for y in all_graph_years if y > 0]
+if valid_years:
+    min_year_filter = st.sidebar.slider(
+        "Minimum publication year",
+        min(valid_years), max(valid_years), min(valid_years),
+        help="Only show papers published in or after this year.",
+    )
+else:
+    min_year_filter = 0
+
+# Get top N nodes, filtered by minimum year
+year_filtered = [
+    n for n in G.nodes
+    if (G.nodes[n].get("publication_year") or 0) >= min_year_filter
+]
+top_nodes = sorted(year_filtered, key=lambda n: in_deg.get(n, 0), reverse=True)[:top_n]
 sub_G = G.subgraph(top_nodes).copy()
 sub_U = sub_G.to_undirected()
 
-# Color by
-color_by = st.sidebar.selectbox(
-    "Color by",
-    ["Detected community", "Review category", "Publication year"],
+# Color by — default to community if no meaningful categories exist
+_all_cats = set(
+    G.nodes[n].get("seed_category", "") for n in G.nodes if G.nodes[n].get("is_seed")
 )
+_has_real_categories = bool(_all_cats - {"", "uncategorized"})
+_color_options = ["Detected community", "Review category", "Publication year"]
+_color_default = 0 if not _has_real_categories else 0
+color_by = st.sidebar.selectbox("Color by", _color_options, index=_color_default)
 
 # Node size by
 size_by = st.sidebar.selectbox(

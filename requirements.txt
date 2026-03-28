@@ -1,0 +1,9 @@
+requests>=2.31
+pandas>=2.2
+networkx>=3.2
+matplotlib>=3.8
+pyvis>=0.3
+cdlib>=0.4
+streamlit>=1.35.0
+plotly>=5.18.0
+fa2>=1.1

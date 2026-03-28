@@ -58,6 +58,14 @@ class CitationDB:
         """)
         self.conn.commit()
 
+    def reset(self) -> None:
+        """Drop all data and recreate tables for a fresh session."""
+        self.conn.executescript("""
+            DROP TABLE IF EXISTS citations;
+            DROP TABLE IF EXISTS papers;
+        """)
+        self._create_tables()
+
     def upsert_paper(self, paper: dict[str, Any]) -> None:
         """Insert or update a paper record.
 

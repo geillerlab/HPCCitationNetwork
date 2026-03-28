@@ -123,6 +123,106 @@ def test_collect_level_1(tmp_path):
     db.close()
 
 
+@responses.activate
+def test_import_seed_records(tmp_path):
+    """Test importing pre-parsed seed records (e.g. from EndNote XML)."""
+    work = _make_work(
+        "https://openalex.org/W50",
+        "https://doi.org/10.5555/record1",
+        "Record Paper",
+        2022,
+        refs=["https://openalex.org/W500"],
+    )
+
+    # Mock DOI resolution
+    responses.add(
+        responses.GET,
+        "https://api.openalex.org/works/doi:10.5555/record1",
+        json=work,
+        status=200,
+    )
+
+    db = CitationDB(tmp_path / "test_records.db")
+    client = OpenAlexClient(rate_limit_delay=0)
+    collector = SnowballCollector(client, db)
+
+    records = [
+        {
+            "doi": "10.5555/record1",
+            "title": "Record Paper",
+            "authors": ["Author, A"],
+            "year": 2022,
+            "journal": "Test Journal",
+            "seed_category": "my_group",
+            "seed_categories": ["my_group"],
+            "is_seed": True,
+        },
+    ]
+
+    progress_calls = []
+    def track_progress(cur, total, msg):
+        progress_calls.append((cur, total, msg))
+
+    stats = collector.import_seed_records(records, progress_callback=track_progress)
+
+    assert stats["resolved"] == 1
+    assert stats["failed"] == 0
+    assert stats["total"] == 1
+
+    seeds = db.get_seed_papers()
+    assert len(seeds) == 1
+    assert seeds[0]["seed_category"] == "my_group"
+    assert seeds[0]["snowball_level"] == 0
+
+    # Reference edges stored
+    citations = db.get_all_citations()
+    assert ("https://openalex.org/W50", "https://openalex.org/W500") in citations
+
+    # Progress callback was called
+    assert len(progress_calls) == 1
+    db.close()
+
+
+@responses.activate
+def test_import_seed_records_title_fallback(tmp_path):
+    """Test that records without DOI fall back to title search."""
+    work = _make_work(
+        "https://openalex.org/W60",
+        "",
+        "Unique Paper Title For Testing",
+        2023,
+    )
+
+    responses.add(
+        responses.GET,
+        "https://api.openalex.org/works",
+        json={"results": [work], "meta": {"next_cursor": None}},
+        status=200,
+    )
+
+    db = CitationDB(tmp_path / "test_title.db")
+    client = OpenAlexClient(rate_limit_delay=0)
+    collector = SnowballCollector(client, db)
+
+    records = [
+        {
+            "doi": None,
+            "title": "Unique Paper Title For Testing",
+            "authors": [],
+            "year": 2023,
+            "journal": "",
+            "seed_category": "uncategorized",
+            "seed_categories": ["uncategorized"],
+            "is_seed": True,
+        },
+    ]
+
+    stats = collector.import_seed_records(records)
+    assert stats["resolved"] == 1
+    assert stats["no_doi"] == 1
+    db.close()
+
+
 def test_graph_from_collector_data(tmp_path):
     """Integration test: collector data -> graph builder."""
     from src.network.builder import build_citation_graph, graph_summary

@@ -10,17 +10,42 @@ from pyvis.network import Network
 
 # Color palette for review categories
 CATEGORY_COLORS = {
-    "general_attractor": "#888888",       # gray
-    "point_attractor": "#e74c3c",         # red
-    "continuous_attractor": "#3498db",     # blue
-    "sequence": "#2ecc71",                # green
-    "successor_representation": "#f39c12", # orange
-    "btsp": "#9b59b6",                    # purple
-    "bespoke": "#1abc9c",                 # teal
-    "autonomous_dynamics": "#e67e22",     # dark orange
+    "attractor_theory": "#e74c3c",        # red
+    "pattern_completion": "#3498db",      # blue
+    "recurrent_circuitry": "#2ecc71",     # green
+    "ca3_dynamics": "#f39c12",            # orange
+    "dg_ca3_interface": "#9b59b6",        # purple
+    "ca3_model": "#1abc9c",              # teal
+    "ca3_spatial": "#e67e22",            # dark orange
     "uncategorized": "#cccccc",           # light gray
     "": "#cccccc",                        # default
 }
+
+
+# Extended palette for dynamically discovered categories
+_DYNAMIC_PALETTE = [
+    "#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6",
+    "#1abc9c", "#e67e22", "#2c3e50", "#d35400", "#16a085",
+    "#c0392b", "#2980b9", "#27ae60", "#f1c40f", "#8e44ad",
+    "#00bcd4", "#ff5722", "#795548", "#607d8b", "#4caf50",
+    "#ff9800", "#673ab7", "#009688", "#3f51b5",
+]
+
+
+def ensure_category_colors(categories: list[str]) -> None:
+    """Register colors for any categories not already in CATEGORY_COLORS.
+
+    Call this after parsing user-supplied data so that visualisation code
+    can look up colours for arbitrary category names.
+
+    Args:
+        categories: Category identifiers (e.g. from an EndNote export).
+    """
+    idx = len(CATEGORY_COLORS)
+    for cat in categories:
+        if cat and cat not in CATEGORY_COLORS:
+            CATEGORY_COLORS[cat] = _DYNAMIC_PALETTE[idx % len(_DYNAMIC_PALETTE)]
+            idx += 1
 
 
 def get_node_color(data: dict) -> str:

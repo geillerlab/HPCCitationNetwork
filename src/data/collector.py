@@ -1,6 +1,7 @@
 """Snowball sampling collector for building citation networks."""
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from src.data.openalex_client import OpenAlexClient
@@ -68,6 +69,159 @@ class SnowballCollector:
             resolved, failed, len(papers),
         )
         return {"resolved": resolved, "failed": failed, "total": len(papers)}
+
+    def import_seed_records(
+        self,
+        records: list[dict[str, Any]],
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ) -> dict[str, int]:
+        """Import pre-parsed seed paper records, resolving via OpenAlex.
+
+        This is the generic counterpart of :meth:`import_seeds` — it
+        accepts records already parsed from any source (e.g. an EndNote
+        XML export) instead of raw Google Doc text.
+
+        Each record is resolved by DOI first; if no DOI is available the
+        title is used as a search fallback.
+
+        Args:
+            records: List of dicts with at least ``doi`` (str | None),
+                ``title`` (str), and ``seed_category`` (str).
+            progress_callback: Optional ``(current, total, message)``
+                callable for UI progress updates.
+
+        Returns:
+            Stats dict: ``{resolved, failed, no_doi, total}``.
+        """
+        resolved = 0
+        failed = 0
+        no_doi = 0
+
+        for i, rec in enumerate(records):
+            doi = rec.get("doi")
+            title = rec.get("title", "")
+            work = None
+
+            # Try DOI resolution first
+            if doi:
+                work = self.client.resolve_doi(doi)
+
+            # Fall back to title search
+            if work is None and title:
+                if not doi:
+                    no_doi += 1
+                try:
+                    hits = self.client.search_works(title, max_results=3)
+                    if hits:
+                        # Pick the best match — exact title substring match
+                        title_lower = title.lower().strip()
+                        for hit in hits:
+                            hit_title = (hit.get("title") or "").lower().strip()
+                            if title_lower in hit_title or hit_title in title_lower:
+                                work = hit
+                                break
+                        if work is None:
+                            # Accept the top result if close enough
+                            work = hits[0]
+                except Exception as e:
+                    logger.warning("Title search failed for '%s': %s", title[:60], e)
+
+            if work is None:
+                logger.warning(
+                    "Failed to resolve: doi=%s title='%s'",
+                    doi, (title or "")[:60],
+                )
+                failed += 1
+                if progress_callback:
+                    progress_callback(i + 1, len(records), f"Failed: {(title or doi or '?')[:40]}")
+                continue
+
+            meta = OpenAlexClient.extract_paper_metadata(work)
+            meta["is_seed"] = True
+            meta["seed_category"] = rec.get("seed_category", "uncategorized")
+            meta["snowball_level"] = 0
+
+            self.db.upsert_paper(meta)
+
+            # Store references as citation edges
+            ref_edges = [
+                (meta["openalex_id"], ref_id)
+                for ref_id in meta.get("referenced_works", [])
+                if ref_id
+            ]
+            if ref_edges:
+                self.db.add_citations_bulk(ref_edges)
+
+            resolved += 1
+            if progress_callback:
+                progress_callback(
+                    i + 1, len(records),
+                    f"Resolved: {meta.get('title', '?')[:40]}",
+                )
+            elif (i + 1) % 10 == 0:
+                logger.info("Seed import: %d/%d processed", i + 1, len(records))
+
+        logger.info(
+            "Seed record import complete: %d resolved, %d failed, %d no-DOI, %d total",
+            resolved, failed, no_doi, len(records),
+        )
+        return {
+            "resolved": resolved,
+            "failed": failed,
+            "no_doi": no_doi,
+            "total": len(records),
+        }
+
+    def run_from_records(
+        self,
+        records: list[dict[str, Any]],
+        max_level: int = 1,
+        max_cited_by: int = 200,
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ) -> dict[str, Any]:
+        """Run the full snowball pipeline from pre-parsed records.
+
+        This is the generic counterpart of :meth:`run`.
+
+        Args:
+            records: Parsed seed records (from :func:`parse_endnote_xml`).
+            max_level: Maximum snowball depth (1 = direct neighbors).
+            max_cited_by: Max cited-by papers per source per level.
+            progress_callback: Optional ``(current, total, message)``
+                callback for UI progress updates.
+
+        Returns:
+            Combined stats dict.
+        """
+        stats: dict[str, Any] = {}
+
+        # Import seeds
+        if not self.db.get_seed_papers():
+            logger.info("Importing seed papers from records...")
+            stats["seed_import"] = self.import_seed_records(
+                records, progress_callback=progress_callback,
+            )
+        else:
+            logger.info(
+                "Seeds already imported (%d papers)",
+                len(self.db.get_seed_papers()),
+            )
+
+        # Collect each level
+        for level in range(1, max_level + 1):
+            logger.info("Starting level %d snowball...", level)
+            stats[f"level_{level}"] = self.collect_level(
+                level=level, max_cited_by=max_cited_by,
+            )
+
+        # Summary
+        stats["total_papers"] = self.db.get_paper_count()
+        stats["total_citations"] = self.db.get_citation_count()
+        logger.info(
+            "Snowball complete: %d papers, %d citations",
+            stats["total_papers"], stats["total_citations"],
+        )
+        return stats
 
     def collect_level(
         self,
